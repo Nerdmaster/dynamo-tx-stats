@@ -8,17 +8,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"sort"
 	"strings"
 	"time"
 )
-
-func usage(message string) {
-	fmt.Fprintln(os.Stderr, message)
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintf(os.Stderr, "Usage: %s <url> <username> <password> <Wallet Name(s)...>\n", os.Args[0])
-	os.Exit(1)
-}
 
 type Transaction struct {
 	Address       string  `json:"address"`
@@ -37,6 +29,43 @@ type Transaction struct {
 	TimeReceived  int64 `json:"timereceived"`
 }
 
+type StatData struct {
+	firstBlock int64
+	lastBlock  int64
+	duration   time.Duration
+	blocks     int64
+	coins      float64
+}
+
+func (s *StatData) record(tx *Transaction) {
+	if s.firstBlock == 0 || tx.Blockheight < s.firstBlock {
+		s.firstBlock = tx.Blockheight
+	}
+	if tx.Blockheight > s.lastBlock {
+		s.lastBlock = tx.Blockheight
+	}
+	s.coins += tx.Amount
+	s.blocks++
+}
+
+func (s *StatData) roughPercent() float64 {
+	if s.blocks == 0 {
+		return 0
+	}
+	return 100.0 * (float64(s.blocks) / float64(s.lastBlock-s.firstBlock))
+}
+
+func getDay(t time.Time) time.Time {
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.Local)
+}
+
+func usage(message string) {
+	fmt.Fprintln(os.Stderr, message)
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintf(os.Stderr, "Usage: %s <url> <username> <password> <Wallet Name(s)...>\n", os.Args[0])
+	os.Exit(1)
+}
+
 func fetchTX(u *url.URL) []*Transaction {
 	var resp struct {
 		Results []*Transaction `json:"result"`
@@ -51,6 +80,8 @@ func fetchTX(u *url.URL) []*Transaction {
 
 	return resp.Results
 }
+
+const reportDays = 10
 
 func main() {
 	if len(os.Args) < 5 {
@@ -73,15 +104,20 @@ func main() {
 	}
 
 	fmt.Printf("%d transactions (wallet(s): %s)\n", len(txList), strings.Join(wallets, ", "))
-	var stats = make(map[string]float64)
+	var reportStats StatData
+	var dailyStats = make([]StatData, reportDays)
+	var hourlyStats = make([]StatData, 24)
 	var now = time.Now()
-	var today = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local)
-	const reportDays = 10
-	var beginReport = today.Add(time.Hour * 24 * -reportDays)
+	var nowDay = getDay(now)
+	var beginReport = nowDay.Add(time.Hour * 24 * -(reportDays - 1))
+
 	for _, tx := range txList {
 		tx.dt = time.Unix(tx.TimeReceived, 0)
 
 		if !tx.Generated {
+			continue
+		}
+		if tx.Confirmations < 6 {
 			continue
 		}
 
@@ -89,43 +125,46 @@ func main() {
 			continue
 		}
 
-		stats["_reporting total"] += tx.Amount
+		reportStats.record(tx)
 
-		stats[tx.dt.Format("2006-01-02")] += tx.Amount
-		if tx.dt.Day() == now.Day() {
-			stats[tx.dt.Format("2006-01-02/15")] += tx.Amount
+		var dayIndex = int(tx.dt.Sub(beginReport) / time.Hour / 24)
+		dailyStats[dayIndex].record(tx)
+
+		if dayIndex == reportDays-1 {
+			hourlyStats[tx.dt.Hour()].record(tx)
 		}
 	}
 
 	var first = txList[0]
 	fmt.Printf("First tx was recorded at %s\n", first.dt.Format("2006-01-02 15:04:05"))
-	var total = stats["_reporting total"]
-	fmt.Printf("Report period total: %0.2f\nDaily average: %0.2f\nHourly average: %0.2f\n", total, total/reportDays, total/reportDays/24.0)
-	var keys []string
-	for k := range stats {
-		if k[0] == '_' {
-			continue
-		}
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
+	var total = reportStats.coins
+	fmt.Printf("Report period total: %0.2f\n", total)
+	fmt.Printf("Daily average: %0.2f\n", total/reportDays)
+	fmt.Printf("Hourly average: %0.2f\n", total/reportDays/24.0)
+	fmt.Printf("Rough Block Win Percent: %0.4f%%\n", reportStats.roughPercent())
+
+	for i := 0; i < reportDays; i++ {
 		var projection = ""
-		if len(k) > 10 {
-			var minutes = 60.0
-			if k == now.Format("2006-01-02/15") {
-				minutes = float64(now.Minute()) + float64(now.Second())/60
-				projection = fmt.Sprintf("(~ %0.2f expected)", stats[k]/minutes*60)
-			}
-			fmt.Printf("- %s:\t\t%8.2f\t\t%0.2f/m\t%s\n", k, stats[k], stats[k]/minutes, projection)
-		} else {
-			var hours = 24.0
-			if k == now.Format("2006-01-02") {
-				hours = float64(now.Hour()) + float64(now.Minute())/60.0
-				projection = fmt.Sprintf("(~ %0.2f expected)", stats[k]/hours*24)
-			}
-			fmt.Printf("%s:\t\t\t%8.2f\t\t%0.2f/h\t%s\n", k, stats[k], stats[k]/hours, projection)
+		var coins = dailyStats[i].coins
+		var hours = 24.0
+		var when = beginReport.Add(time.Hour * 24 * time.Duration(i)).Format("2006-01-02")
+		if i == reportDays-1 {
+			hours = float64(now.Hour()) + float64(now.Minute())/60.0
+			projection = fmt.Sprintf(" (~ %0.2f expected)", coins/hours*24)
 		}
+		fmt.Printf("%s:\t\t\t%8.2f\t\t%0.2f/h\t\tWin%%: %0.4f%%%s\n", when, coins, coins/hours, dailyStats[i].roughPercent(), projection)
+	}
+
+	for i := 0; i <= now.Hour(); i++ {
+		var projection = ""
+		var coins = hourlyStats[i].coins
+		var minutes = 60.0
+		var when = fmt.Sprintf("%s/%02d", getDay(now).Format("2006-01-02"), i)
+		if i == now.Hour() {
+			minutes = float64(now.Minute()) + float64(now.Second())/60
+			projection = fmt.Sprintf("(~ %0.2f expected)", coins/minutes*60)
+		}
+		fmt.Printf("- %s:\t\t%8.2f\t\t%0.2f/m\t%s\n", when, coins, coins/minutes, projection)
 	}
 }
 
