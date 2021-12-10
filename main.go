@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -62,7 +63,7 @@ func getDay(t time.Time) time.Time {
 func usage(message string) {
 	fmt.Fprintln(os.Stderr, message)
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintf(os.Stderr, "Usage: %s <url> <username> <password> <Wallet Name(s)...>\n", os.Args[0])
+	fmt.Fprintf(os.Stderr, "Usage: %s <url> <username> <password> <report days> <Wallet Name(s)...>\n", os.Args[0])
 	os.Exit(1)
 }
 
@@ -81,15 +82,20 @@ func fetchTX(u *url.URL) []*Transaction {
 	return resp.Results
 }
 
-const reportDays = 10
-
 func main() {
-	if len(os.Args) < 5 {
+	if len(os.Args) < 6 {
 		usage("Not enough args")
 	}
 
-	var urlString, user, pass = os.Args[1], os.Args[2], os.Args[3]
-	var wallets = os.Args[4:]
+	var urlString, user, pass, rdstr = os.Args[1], os.Args[2], os.Args[3], os.Args[4]
+	var reportDays, _ = strconv.Atoi(rdstr)
+	if reportDays == 0 {
+		usage(fmt.Sprintf("Invalid reporting days value %q", rdstr))
+	}
+	if reportDays < 2 {
+		usage("Reporting days must be at least 2")
+	}
+	var wallets = os.Args[5:]
 
 	var u, err = url.Parse(urlString)
 	if err != nil {
@@ -109,7 +115,8 @@ func main() {
 	var hourlyStats = make([]StatData, 24)
 	var now = time.Now()
 	var nowDay = getDay(now)
-	var beginReport = nowDay.Add(time.Hour * 24 * -(reportDays - 1))
+	var daysAgo = time.Duration(reportDays-1) * time.Hour * -24
+	var beginReport = nowDay.Add(daysAgo)
 
 	for _, tx := range txList {
 		tx.dt = time.Unix(tx.TimeReceived, 0)
@@ -139,8 +146,8 @@ func main() {
 	fmt.Printf("First tx was recorded at %s\n", first.dt.Format("2006-01-02 15:04:05"))
 	var total = reportStats.coins
 	fmt.Printf("Report period total: %0.2f\n", total)
-	fmt.Printf("Daily average: %0.2f\n", total/reportDays)
-	fmt.Printf("Hourly average: %0.2f\n", total/reportDays/24.0)
+	fmt.Printf("Daily average: %0.2f\n", total/float64(reportDays))
+	fmt.Printf("Hourly average: %0.2f\n", total/float64(reportDays)/24.0)
 	fmt.Printf("Rough Block Win Percent: %0.4f%%\n", reportStats.roughPercent())
 
 	for i := 0; i < reportDays; i++ {
