@@ -72,7 +72,7 @@ func fetchTX(u *url.URL) []*Transaction {
 		Results []*Transaction `json:"result"`
 	}
 
-	var data = bytes.NewBufferString(`{"jsonrpc":"1.0","id":"curltest","method":"listtransactions","params":["*", 10000, 0]}`)
+	var data = bytes.NewBufferString(`{"jsonrpc":"1.0","id":"curltest","method":"listtransactions","params":["*", 100000, 0]}`)
 	var err = doPost(u, data, &resp)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Unable to POST to URL %q: %s", u.String(), err)
