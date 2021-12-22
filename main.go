@@ -53,7 +53,7 @@ func (s *StatData) roughPercent() float64 {
 	if s.blocks == 0 {
 		return 0
 	}
-	return 100.0 * (float64(s.blocks) / float64(s.lastBlock-s.firstBlock))
+	return 100.0 * (float64(s.blocks) / float64(s.lastBlock-s.firstBlock+1))
 }
 
 func getDay(t time.Time) time.Time {
@@ -124,7 +124,7 @@ func main() {
 		if !tx.Generated {
 			continue
 		}
-		if tx.Confirmations < 6 {
+		if tx.Confirmations < 2 {
 			continue
 		}
 
@@ -169,7 +169,7 @@ func main() {
 		var when = fmt.Sprintf("%s/%02d", getDay(now).Format("2006-01-02"), i)
 		if i == now.Hour() {
 			minutes = float64(now.Minute()) + float64(now.Second())/60
-			projection = fmt.Sprintf("(~ %0.2f expected)", coins/minutes*60)
+			projection = fmt.Sprintf(" (~ %0.2f expected)", coins/minutes*60)
 		}
 		fmt.Printf("- %s:\t\t%8.2f\t\t%0.2f/m\t%s\n", when, coins, coins/minutes, projection)
 	}
