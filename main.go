@@ -97,6 +97,16 @@ func main() {
 	}
 	var wallets = os.Args[5:]
 
+	// Lazy-man's deduping: use a map and rewrite the whole thing!
+	var uniqueWallets = make(map[string]bool)
+	for _, w := range wallets {
+		uniqueWallets[w] = true
+	}
+	wallets = nil
+	for k := range uniqueWallets {
+		wallets = append(wallets, k)
+	}
+
 	var u, err = url.Parse(urlString)
 	if err != nil {
 		usage(fmt.Sprintf("Invalid URL %q: %s", urlString, err))
